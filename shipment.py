@@ -1,6 +1,5 @@
 import sys
 import os
-import time
 
 # Ensure mecademic_demo_app is in the Python path for standalone execution
 app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mecademic_demo_app'))
@@ -10,6 +9,7 @@ if app_path not in sys.path:
 from devices import Device
 from typing import Dict
 
+
 def shipment(devices: Dict[str, Device]):
     """
     Template logic for SHIPMENT task.
@@ -18,15 +18,12 @@ def shipment(devices: Dict[str, Device]):
     Args:
         devices: A dictionary mapping device names to their Device instances.
     """
-    JOINT_VEL = 15
-
     screwdriver = devices["screwdriver"]
     dispenser = devices["dispenser"]
     scara = devices["scara"]
     tester = devices["tester"]
 
-    zaber = devices["zaber"]
-
+    # Use a safe shipment posture to clear the working area.
     screwdriver.api.SetJointVel(100)
     dispenser.api.SetJointVel(5)
     scara.api.SetJointVel(10)
@@ -37,6 +34,7 @@ def shipment(devices: Dict[str, Device]):
     scara.api.MoveJoints(-140, 145, -60, 0)
     tester.api.MoveJoints(0, -60, 60, 0, 50, 0)
 
+    # Synchronize all stations before returning control.
     screwdriver.api.WaitIdle()
     dispenser.api.WaitIdle()
     scara.api.WaitIdle()

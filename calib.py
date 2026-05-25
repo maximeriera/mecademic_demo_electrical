@@ -10,6 +10,7 @@ if app_path not in sys.path:
 from devices import Device
 from typing import Dict
 
+
 def calib(devices: Dict[str, Device]):
     """
     Template logic for CALIBRATION task.
@@ -18,7 +19,7 @@ def calib(devices: Dict[str, Device]):
     Args:
         devices: A dictionary mapping device names to their Device instances.
     """
-    # Implement calibration routine here
+    # Placeholder calibration routine to keep task contract valid.
     time.sleep(1)  # Simulate time taken for calibration
     return
 

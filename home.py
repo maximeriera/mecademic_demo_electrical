@@ -1,6 +1,5 @@
 import sys
 import os
-import time
 
 # Ensure mecademic_demo_app is in the Python path for standalone execution
 app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mecademic_demo_app'))
@@ -9,6 +8,7 @@ if app_path not in sys.path:
 
 from devices import Device
 from typing import Dict
+
 
 def home(devices: Dict[str, Device]):
     """
@@ -31,6 +31,7 @@ def home(devices: Dict[str, Device]):
     scara.api.SetJointVel(10)
     tester.api.SetJointVel(30)
 
+    # Move all stations to known home/posture presets.
     screwdriver.api.MoveJoints(2.59797, -47.59947, 64.63894, 90.76178, 87.51615, -107.05599)
     dispenser.api.MoveJoints(0, -60, 60, 0, 30, -45)
     scara.api.MoveJoints(-140, 90, -40, 0)
@@ -38,6 +39,7 @@ def home(devices: Dict[str, Device]):
 
     zaber.move_axis(0)
 
+    # Block until every robot completes its move.
     screwdriver.api.WaitIdle()
     dispenser.api.WaitIdle()
     scara.api.WaitIdle()

@@ -9,7 +9,7 @@ if app_path not in sys.path:
 from devices import Device
 from typing import Dict
 from core.ProductionContext import ProductionContext
-import time
+
 
 def everyone_wait(screwdriver, dispenser, scara, tester):
     screwdriver.api.WaitIdle()
@@ -17,11 +17,13 @@ def everyone_wait(screwdriver, dispenser, scara, tester):
     scara.api.WaitIdle()
     tester.api.WaitIdle()
 
+
 def dispensing_glue(dispenser):
     dispenser.api.MovePose(93.00003, 74.64999, 165.54995,
                       113.81136, 3.12123, -135.76364)
     dispenser.api.SetBlending(0)
-    for i in range(1):
+    # Keep the loop shape for easy extension to multiple glue passes.
+    for _ in range(1):
         dispenser.api.MoveLin(93.00002, 74.64999, 129.74996,
                           113.81135, 3.12122, -135.76365)
         dispenser.api.SetBlending(100)
@@ -53,6 +55,7 @@ def dispensing_glue(dispenser):
     dispenser.api.MoveLin(93.00003, 74.64999, 165.54995,
                       113.81136, 3.12123, -135.76364)
 
+
 def test_pattern(tester):
     '''
     #note: these are the positions on the screen, no app or ret
@@ -83,7 +86,7 @@ def test_pattern(tester):
     tester.MoveLin(177+(49/2), -20.5+45, 135, -180, 0, 180) 
     '''
     # Testing buttons
-    for i in range(3):
+    for _ in range(3):
         tester.api.MoveLin(202.7, -27.9, 135, -180, 0, -180)
         tester.api.MoveLin(202.7, -27.9, 126, -180, 0, -180)
         tester.api.Delay(0.5)
@@ -115,6 +118,7 @@ def test_pattern(tester):
     tester.api.SetBlending(100)
     tester.api.MoveJoints(0, -60, 0, 0, 90, 0)
 
+
 def prod_cycle(devices: Dict[str, Device], context: ProductionContext = None):
     """
     Template logic for PROD task.
@@ -127,15 +131,10 @@ def prod_cycle(devices: Dict[str, Device], context: ProductionContext = None):
     context : ProductionContext | None
         Shared production context for params/variables persistence across cycles.
     """
-    """Logic for PROD task."""
     LIN_SPEED = 1000
     JOINT_SPEED = 100
     DISPENSING_LIN_SPEED = 100
     CART_ACC = 30
-
-    JOINT_VEL = 15
-    CARTLIN_VEL = 100
-    CARTANG_VEL = 45
 
     ZABER_SCREW_POS = 0
     ZABER_DISPENSER_POS = 180
@@ -149,8 +148,7 @@ def prod_cycle(devices: Dict[str, Device], context: ProductionContext = None):
 
     zaber = devices["zaber"]
 
-    # Set variables
-
+    # Configure motion profiles for each robot station.
     screwdriver.api.SetJointVel(JOINT_SPEED)
     screwdriver.api.SetCartLinVel(LIN_SPEED)
     screwdriver.api.SetCartAcc(CART_ACC)
@@ -167,7 +165,7 @@ def prod_cycle(devices: Dict[str, Device], context: ProductionContext = None):
     tester.api.SetCartLinVel(LIN_SPEED)
     tester.api.SetCartAcc(CART_ACC)
 
-
+    # Sequence: screw -> dispense -> place -> test -> remove screen.
     zaber.move_axis(ZABER_SCREW_POS)
     screwdriver.api.StartProgram("screwing_seq")
 
@@ -193,7 +191,6 @@ def prod_cycle(devices: Dict[str, Device], context: ProductionContext = None):
     zaber.move_axis(ZABER_SCARA_POS)
     scara.api.StartProgram("place_screen")
     everyone_wait(screwdriver, dispenser, scara, tester)
-
 
     zaber.move_axis(ZABER_TEST_POS)
     test_pattern(tester)
