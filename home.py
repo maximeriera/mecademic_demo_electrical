@@ -1,72 +1,38 @@
-import sys
-import os
+"""HOME task — bring the Electrical assembly demo to its start position.
 
-# Ensure mecademic_demo_app is in the Python path for standalone execution
-app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mecademic_demo_app'))
-if app_path not in sys.path:
-    sys.path.insert(0, app_path)
+Runs from the HOME button, and automatically before the first PROD cycle and
+after a graceful STOP. INITIALIZE already activated and homed every robot and
+the Zaber axis, so this only moves to the cell's own start poses.
+An exception here faults the cell.
+"""
 
-from devices import Device
 from typing import Dict
 
+from core import AppContext
+from devices import Device
 
-def home(devices: Dict[str, Device]):
-    """
-    Template logic for HOME task.
-    This function is called when the Initialize/Home action is triggered.
-    
-    Args:
-        devices: A dictionary mapping device names to their Device instances.
-                 You can interact with the devices via `devices['device_name']`.
-    """
-    screwdriver = devices["screwdriver"]
-    dispenser = devices["dispenser"]
-    scara = devices["scara"]
-    tester = devices["tester"]
+from prod import (DISPENSER_REST_JOINTS, SCREWDRIVER_REST_JOINTS, TESTER_REST_JOINTS,
+                  move_axis, wait_all_robots)
 
-    zaber = devices["zaber"]
+# Joint velocity of each robot while homing, percent.
+HOME_JOINT_VEL = {"screwdriver": 20, "dispenser": 5, "scara": 10, "tester": 30}
 
-    screwdriver.api.SetJointVel(20)
-    dispenser.api.SetJointVel(5)
-    scara.api.SetJointVel(10)
-    tester.api.SetJointVel(30)
+SCARA_HOME_JOINTS = (-140, 90, -40, 0)
+AXIS_HOME_MM = 0
 
-    # Move all stations to known home/posture presets.
-    screwdriver.api.MoveJoints(2.59797, -47.59947, 64.63894, 90.76178, 87.51615, -107.05599)
-    dispenser.api.MoveJoints(0, -60, 60, 0, 30, -45)
-    scara.api.MoveJoints(-140, 90, -40, 0)
-    tester.api.MoveJoints(0, -60, 0, 0, 90, 0)
 
-    zaber.move_axis(0)
+def home(devices: Dict[str, Device], context: AppContext):
+    """Move every robot to its rest pose and the axis to 0, all at once."""
+    timeout = float(context.get_param("program_timeout_s", 120))
 
-    # Block until every robot completes its move.
-    screwdriver.api.WaitIdle()
-    dispenser.api.WaitIdle()
-    scara.api.WaitIdle()
-    tester.api.WaitIdle()
+    with context.step("Move stations to home"):
+        for name, vel in HOME_JOINT_VEL.items():
+            devices[name].api.SetJointVel(vel)
 
-    return
+        devices["screwdriver"].api.MoveJoints(*SCREWDRIVER_REST_JOINTS)
+        devices["dispenser"].api.MoveJoints(*DISPENSER_REST_JOINTS)
+        devices["scara"].api.MoveJoints(*SCARA_HOME_JOINTS)
+        devices["tester"].api.MoveJoints(*TESTER_REST_JOINTS)
 
-if __name__ == '__main__':
-    import os
-    import logging
-    from core.ApplicationController import ApplicationController
-
-    logging.basicConfig(level=logging.INFO)
-    print("Running standalone test for home...")
-
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, "config.yaml")
-
-    # Load actual device configurations
-    app_ctrl = ApplicationController(config_path=config_path)
-
-    try:
-        # Optional: uncomment to actually communicate with hardware
-        app_ctrl.initialize()
-
-        home(app_ctrl.devices)
-    finally:
-        app_ctrl.shutdown()
-
-    print("Test completed successfully.")
+        move_axis(devices, context, AXIS_HOME_MM)       # blocks; the robots move meanwhile
+        wait_all_robots(devices, timeout)

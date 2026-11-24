@@ -1,5 +1,14 @@
-logs/
+# Python
+__pycache__/
+*.py[cod]
 .venv/
 
-*.pyc
-__pycache__/
+# Written by the app at runtime
+logs/
+context.state.json
+# backups/ (robot backups written by the app) is tracked in this repo on purpose.
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini

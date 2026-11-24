@@ -1,237 +1,233 @@
-import sys
-import os
+"""PROD task — one production cycle of the Electrical assembly demo.
 
-# Ensure mecademic_demo_app is in the Python path for standalone execution
-app_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mecademic_demo_app'))
-if app_path not in sys.path:
-    sys.path.insert(0, app_path)
+The app calls ``prod_cycle(devices, context)`` in a loop while PROD runs:
+home() first, then cycles until STOP, then home() again. ABORT interrupts
+the cycle where it is (a robot wait raises, the Zaber axis stops) and skips
+the exit home. Nothing here needs to check for STOP or ABORT.
 
-from devices import Device
+Sequence (declared under ``sequences: prod_cycle`` in config.yaml):
+  1. Screw parts      screwdriver program "screwing_seq", end checkpoint 11
+  2. Dispense glue    dispenser glue path, driven from this file
+  3. Place screen     scara program "place_screen", end checkpoint 11
+  4. Test screen      tester touch pattern, driven from this file
+  5. Pick screen      scara program "pick_screen", end checkpoint 12
+
+The Zaber axis carries the part to each station before its step. A robot's
+retract move is sent at the end of its step and finishes while the axis moves
+on; the next step waits for every robot before it ends.
+
+Robot programs and checkpoints this file relies on are listed in README.md
+("Robot programs").
+"""
+
 from typing import Dict
-from core.ProductionContext import ProductionContext
+
+from core import AppContext
+from devices import Device
+
+from cell_tools import run_program
+
+# Robot programs saved on the controllers, and the checkpoint each must set on
+# its last line. TODO: add SetCheckpoint(<n>) at the end of each program on the
+# robot (the backups of 2026-05-25 have none).
+SCREW_PROGRAM, SCREW_DONE = "screwing_seq", 11          # screwdriver
+PLACE_SCREEN_PROGRAM, PLACE_SCREEN_DONE = "place_screen", 11   # scara
+PICK_SCREEN_PROGRAM, PICK_SCREEN_DONE = "pick_screen", 12      # scara
+
+# Zaber axis position of each station, mm.
+AXIS_SCREW_MM = 0
+AXIS_DISPENSE_MM = 180
+AXIS_SCARA_MM = 400
+AXIS_TEST_MM = 450
+
+ROBOTS = ("screwdriver", "dispenser", "scara", "tester")
+
+# Screwdriver: WRF of the first screw, the retract move in that frame, and its rest joints.
+SCREW_RETRACT_WRF = (49, 137, 478.5, 180, 0, -90)
+SCREW_RETRACT_POSE = (0, 0, 10, 180, 0, 0)
+SCREWDRIVER_REST_JOINTS = (2.59797, -47.59947, 64.63894, 90.76177, 87.51615, -107.05599)
+
+# Dispenser: glue bead around the part, WRF, mm / deg. The first and last
+# points are the approach above the start of the bead.
+GLUE_APPROACH = (93.00003, 74.64999, 165.54995, 113.81136, 3.12123, -135.76364)
+GLUE_PATH = (
+    (93.00002, 74.64999, 129.74996, 113.81135, 3.12122, -135.76365),
+    (200.30003, 74.65, 129.74995, 113.81136, 3.12123, -135.76366),
+    (203.50002, 72.5002, 129.74994, 113.81136, 3.12123, -135.76366),
+    (205.50002, 69.15002, 129.74994, 113.81136, 3.12123, -135.76366),
+    (205.50002, 27.30003, 129.74994, 113.81137, 3.12123, -135.76367),
+    (203.50002, 24.30003, 129.74994, 113.81137, 3.12123, -135.76367),
+    (199.65002, 21.10003, 129.74993, 113.81137, 3.12123, -135.76369),
+    (93.25002, 21.10003, 129.74993, 113.81138, 3.12123, -135.76368),
+    (91.25002, 23.50003, 129.74993, 113.81138, 3.12123, -135.76368),
+    (85, 24.00005, 129.7499, 113.81139, 3.12122, -135.7637),
+    (85, 70.75004, 129.74989, 113.81139, 3.12122, -135.76369),
+    (91.00002, 73.64999, 129.74996, 113.81135, 3.12122, -135.76365),
+    (93.00002, 74.64999, 129.74996, 113.81135, 3.12122, -135.76365),
+)
+DISPENSER_REST_JOINTS = (0, -60, 60, 0, 30, -45)
+
+# Tester: touch pattern on the screen, WRF, mm / deg.
+# Screen corners at touch height (z 127): bottom right (177, 69.5),
+# bottom left (226, 69.5), top left (226, -20.5), top right (177, -20.5).
+TEST_APPROACH = (205, 19, 140, -180, 0, 180)
+TEST_BUTTON_UP = (202.7, -27.9, 135, -180, 0, -180)
+TEST_BUTTON_DOWN = (202.7, -27.9, 126, -180, 0, -180)
+TEST_BUTTON_PRESSES = 3
+TEST_SWIPES = 8           # vertical swipes, 7 mm apart, starting at x = 226
+TESTER_REST_JOINTS = (0, -60, 0, 0, 90, 0)
 
 
-def everyone_wait(screwdriver, dispenser, scara, tester):
-    screwdriver.api.WaitIdle()
-    dispenser.api.WaitIdle()
-    scara.api.WaitIdle()
-    tester.api.WaitIdle()
+# --------------------------------------------------------------------------
+# Shared helpers (also used by home.py, shipment.py and manual_actions.py)
+# --------------------------------------------------------------------------
+
+def wait_all_robots(devices: Dict[str, Device], timeout: float) -> None:
+    """Block until every robot finished its queued moves. Raises on ABORT or timeout."""
+    for name in ROBOTS:
+        devices[name].api.WaitIdle(timeout=timeout)
 
 
-def dispensing_glue(dispenser):
-    dispenser.api.MovePose(93.00003, 74.64999, 165.54995,
-                      113.81136, 3.12123, -135.76364)
-    dispenser.api.SetBlending(0)
-    # Keep the loop shape for easy extension to multiple glue passes.
-    for _ in range(1):
-        dispenser.api.MoveLin(93.00002, 74.64999, 129.74996,
-                          113.81135, 3.12122, -135.76365)
-        dispenser.api.SetBlending(100)
-        dispenser.api.MoveLin(200.30003, 74.65, 129.74995,
-                          113.81136, 3.12123, -135.76366)
-        dispenser.api.MoveLin(203.50002, 72.5002, 129.74994,
-                          113.81136, 3.12123, -135.76366)
-        dispenser.api.MoveLin(205.50002, 69.15002, 129.74994,
-                          113.81136, 3.12123, -135.76366)
-        dispenser.api.MoveLin(205.50002, 27.30003, 129.74994,
-                          113.81137, 3.12123, -135.76367)
-        dispenser.api.MoveLin(203.50002, 24.30003, 129.74994,
-                          113.81137, 3.12123, -135.76367)
-        dispenser.api.MoveLin(199.65002, 21.10003, 129.74993,
-                          113.81137, 3.12123, -135.76369)
-        dispenser.api.MoveLin(93.25002, 21.10003, 129.74993,
-                          113.81138, 3.12123, -135.76368)
-        dispenser.api.MoveLin(91.25002, 23.50003, 129.74993,
-                          113.81138, 3.12123, -135.76368)
-        dispenser.api.MoveLin(85, 24.00005, 129.7499,
-                          113.81139, 3.12122, -135.7637)
-        dispenser.api.MoveLin(85, 70.75004, 129.74989,
-                          113.81139, 3.12122, -135.76369)
-        dispenser.api.MoveLin(91.00002, 73.64999, 129.74996,
-                          113.81135, 3.12122, -135.76365)
-        dispenser.api.MoveLin(93.00002, 74.64999, 129.74996,
-                          113.81135, 3.12122, -135.76365)
-    dispenser.api.SetBlending(100)
-    dispenser.api.MoveLin(93.00003, 74.64999, 165.54995,
-                      113.81136, 3.12123, -135.76364)
+def move_axis(devices: Dict[str, Device], context: AppContext, position_mm: float) -> None:
+    """Move the Zaber axis to *position_mm* and block until it is there.
+
+    Publishes ``axis`` ({target_mm, moving}) before and after the move, for the
+    line diagram of the custom view: the Zaber driver offers no position read
+    that is safe from another thread while this one blocks in the move.
+
+    ``move_axis`` is a method of the Zaber driver, not of its ``.api``, so a
+    ``type: "simulated"`` stand-in (the smoke test) doesn't have it: there is
+    nothing to move then, and the call only logs.
+    """
+    axis = devices["zaber"]
+    context.publish("axis", {"target_mm": position_mm, "moving": True})
+    if not hasattr(axis, "move_axis"):
+        axis.logger.info(f"[zaber] simulated: move_axis({position_mm}) skipped.")
+    else:
+        axis.move_axis(position_mm)
+    context.publish("axis", {"target_mm": position_mm, "moving": False})
 
 
-def test_pattern(tester):
-    '''
-    #note: these are the positions on the screen, no app or ret
-    bottom_right = tester.MoveLin(177, 69.5, 127, 180, 0, -180)
-    bottom_left = tester.MoveLin(226, 69.5, 127, 180, 0, 180)
-    top_left = tester.MoveLin(226, -20.5, 127, -180, 0, 180)
-    top_right = tester.MoveLin(177, -20.5, 127, -180, 0, 180)
-    '''
-    # approach middle
-    tester.api.MovePose(205, 19, 140, -180, 0, 180)
-    tester.api.SetBlending(0)
-    '''
-    # Testing corners
-    tester.MoveLin(177, 69.5, 135, 180, 0, 180)
-    tester.MoveLin(177, 69.5, 127, 180, 0, -180)
-    tester.MoveLin(177, 69.5, 135, 180, 0, 180)
-    tester.MoveLin(226, 69.5, 135, 180, 0, 180)
-    tester.MoveLin(226, 69.5, 127, 180, 0, 180)
-    tester.MoveLin(226, 69.5, 135, 180, 0, 180)
+def apply_production_speeds(devices: Dict[str, Device], context: AppContext) -> None:
+    """Set every robot's motion parameters from the params (HOME leaves slower ones)."""
+    joint_vel = float(context.get_param("joint_vel_pct", 100))
+    lin_vel = float(context.get_param("cart_lin_vel_mm_s", 1000))
+    dispense_vel = float(context.get_param("dispense_lin_vel_mm_s", 100))
+    acc = float(context.get_param("cart_acc_pct", 30))
+    for name in ROBOTS:
+        robot = devices[name].api
+        robot.SetJointVel(joint_vel)
+        robot.SetCartLinVel(dispense_vel if name == "dispenser" else lin_vel)
+        robot.SetCartAcc(acc)
+
+
+# --------------------------------------------------------------------------
+# Stations — one per PROD step, shared with the manual actions
+# --------------------------------------------------------------------------
+
+def screw_parts(devices: Dict[str, Device], context: AppContext) -> None:
+    """Run the screwing program, then send the screwdriver back to rest (not waited)."""
+    screwdriver = devices["screwdriver"].api
+    timeout = float(context.get_param("program_timeout_s", 120))
+
+    move_axis(devices, context, AXIS_SCREW_MM)
+    run_program(devices["screwdriver"], SCREW_PROGRAM, SCREW_DONE, timeout=timeout)
+    wait_all_robots(devices, timeout)
+
+    screwdriver.SetWrf(*SCREW_RETRACT_WRF)
+    screwdriver.MoveLin(*SCREW_RETRACT_POSE)
+    screwdriver.MoveJoints(*SCREWDRIVER_REST_JOINTS)
+
+
+def dispense_glue(devices: Dict[str, Device], context: AppContext) -> None:
+    """Draw the glue bead, then send the dispenser back to rest (not waited)."""
+    dispenser = devices["dispenser"].api
+    timeout = float(context.get_param("program_timeout_s", 120))
+
+    move_axis(devices, context, AXIS_DISPENSE_MM)
+    dispenser.MovePose(*GLUE_APPROACH)
+    dispenser.SetBlending(0)
+    dispenser.MoveLin(*GLUE_PATH[0])
+    dispenser.SetBlending(100)
+    for point in GLUE_PATH[1:]:
+        dispenser.MoveLin(*point)
+    dispenser.MoveLin(*GLUE_APPROACH)
+    wait_all_robots(devices, timeout)
+
+    dispenser.MoveJoints(*DISPENSER_REST_JOINTS)
+
+
+def place_screen(devices: Dict[str, Device], context: AppContext) -> None:
+    """Place the screen on the part with the SCARA."""
+    timeout = float(context.get_param("program_timeout_s", 120))
+    move_axis(devices, context, AXIS_SCARA_MM)
+    run_program(devices["scara"], PLACE_SCREEN_PROGRAM, PLACE_SCREEN_DONE, timeout=timeout)
+    wait_all_robots(devices, timeout)
+
+
+def test_screen(devices: Dict[str, Device], context: AppContext) -> None:
+    """Press the button three times, then swipe across the screen."""
+    tester = devices["tester"].api
+    timeout = float(context.get_param("program_timeout_s", 120))
+
+    move_axis(devices, context, AXIS_TEST_MM)
+    tester.MovePose(*TEST_APPROACH)
+    tester.SetBlending(0)
+
+    for _ in range(TEST_BUTTON_PRESSES):
+        tester.MoveLin(*TEST_BUTTON_UP)
+        tester.MoveLin(*TEST_BUTTON_DOWN)
+        tester.Delay(0.5)
+        tester.MoveLin(*TEST_BUTTON_UP)
+
     tester.MoveLin(226, -20.5, 135, -180, 0, 180)
-    tester.MoveLin(226, -20.5, 127, -180, 0, 180)
-    tester.MoveLin(226, -20.5, 135, -180, 0, 180)
-    tester.MoveLin(177, -20.5, 135, -180, 0, 180)
-    tester.MoveLin(177, -20.5, 127, -180, 0, 180)
-    tester.MoveLin(177, -20.5, 135, -180, 0, 180)
-    tester.MoveLin(177+(49/2), -20.5+45, 135, -180, 0, 180)
-    tester.MoveLin(177+(49/2), -20.5+45, 127, -180, 0, 180)
-    tester.MoveLin(177+(49/2), -20.5+45, 135, -180, 0, 180) 
-    '''
-    # Testing buttons
-    for _ in range(3):
-        tester.api.MoveLin(202.7, -27.9, 135, -180, 0, -180)
-        tester.api.MoveLin(202.7, -27.9, 126, -180, 0, -180)
-        tester.api.Delay(0.5)
-        tester.api.MoveLin(202.7, -27.9, 135, -180, 0, -180)
     x = 0
-    tester.api.MoveLin(226, -20.5, 135, -180, 0, 180)
-    for i in range(8):
-        if i % 2 == 1:  # impair
-            tester.api.MoveLin(226-x, 69.5, 127, 180, 0, 180)
-            tester.api.MoveLin(226-x, -20.5, 127, -180, 0, 180)
-        if i % 2 == 0:  # pair
-            tester.api.MoveLin(226-x, -20.5, 127, -180, 0, 180)
-            tester.api.MoveLin(226-x, 69.5, 127, 180, 0, 180)
-        x = x + 7
-    tester.api.MoveLin(226-x+7, -20.5, 135, -180, 0, 180)
-    y = 0
-    tester.api.MoveLin(177, 69.5, 135, 180, 0, -180)
-    '''
-    for i in range(10):
-        if i % 2 == 1:  # impair
-            tester.MoveLin(226, 69.5-y, 127, 180, 0, 180)
-            tester.MoveLin(177, 69.5-y, 127, 180, 0, -180)
-        if i % 2 == 0:  # pair
-            tester.MoveLin(177, 69.5-y, 127, 180, 0, -180)
-            tester.MoveLin(226, 69.5-y, 127, 180, 0, 180)
-        y = y + 10
-        '''
-    tester.api.MoveLin(177, 69.5-y+10, 135, 180, 0, -180)
-    tester.api.SetBlending(100)
-    tester.api.MoveJoints(0, -60, 0, 0, 90, 0)
+    for i in range(TEST_SWIPES):
+        if i % 2 == 0:   # top to bottom
+            tester.MoveLin(226 - x, -20.5, 127, -180, 0, 180)
+            tester.MoveLin(226 - x, 69.5, 127, 180, 0, 180)
+        else:            # bottom to top
+            tester.MoveLin(226 - x, 69.5, 127, 180, 0, 180)
+            tester.MoveLin(226 - x, -20.5, 127, -180, 0, 180)
+        x += 7
+    tester.MoveLin(226 - x + 7, -20.5, 135, -180, 0, 180)
+
+    tester.MoveLin(177, 69.5, 135, 180, 0, -180)
+    tester.MoveLin(177, 79.5, 135, 180, 0, -180)
+    tester.SetBlending(100)
+    tester.MoveJoints(*TESTER_REST_JOINTS)
+    wait_all_robots(devices, timeout)
 
 
-def prod_cycle(devices: Dict[str, Device], context: ProductionContext = None):
-    """
-    Template logic for PROD task.
-    This function is executed cyclically while the PROD task is running.
+def pick_screen(devices: Dict[str, Device], context: AppContext) -> None:
+    """Remove the screen from the part with the SCARA."""
+    timeout = float(context.get_param("program_timeout_s", 120))
+    move_axis(devices, context, AXIS_SCARA_MM)
+    run_program(devices["scara"], PICK_SCREEN_PROGRAM, PICK_SCREEN_DONE, timeout=timeout)
+    wait_all_robots(devices, timeout)
 
-    Parameters
-    ----------
-    devices : Dict[str, Device]
-        Configured device objects.
-    context : ProductionContext | None
-        Shared production context for params/variables persistence across cycles.
-    """
-    LIN_SPEED = 1000
-    JOINT_SPEED = 100
-    DISPENSING_LIN_SPEED = 100
-    CART_ACC = 30
 
-    ZABER_SCREW_POS = 0
-    ZABER_DISPENSER_POS = 180
-    ZABER_SCARA_POS = 400
-    ZABER_TEST_POS = 450
-    
-    screwdriver = devices["screwdriver"]
-    dispenser = devices["dispenser"]
-    scara = devices["scara"]
-    tester = devices["tester"]
+# --------------------------------------------------------------------------
+# The cycle
+# --------------------------------------------------------------------------
 
-    zaber = devices["zaber"]
+def prod_cycle(devices: Dict[str, Device], context: AppContext):
+    """Screw, dispense, place the screen, test it, remove it; count the part."""
+    apply_production_speeds(devices, context)
 
-    # Configure motion profiles for each robot station.
-    screwdriver.api.SetJointVel(JOINT_SPEED)
-    screwdriver.api.SetCartLinVel(LIN_SPEED)
-    screwdriver.api.SetCartAcc(CART_ACC)
-    
-    dispenser.api.SetJointVel(JOINT_SPEED)
-    dispenser.api.SetCartLinVel(DISPENSING_LIN_SPEED)
-    dispenser.api.SetCartAcc(CART_ACC)
-    
-    scara.api.SetJointVel(JOINT_SPEED)
-    scara.api.SetCartLinVel(LIN_SPEED)
-    scara.api.SetCartAcc(CART_ACC)
-    
-    tester.api.SetJointVel(JOINT_SPEED)
-    tester.api.SetCartLinVel(LIN_SPEED)
-    tester.api.SetCartAcc(CART_ACC)
+    with context.step("Screw parts"):
+        screw_parts(devices, context)
 
-    # Sequence: screw -> dispense -> place -> test -> remove screen.
-    zaber.move_axis(ZABER_SCREW_POS)
-    screwdriver.api.StartProgram("screwing_seq")
+    with context.step("Dispense glue"):
+        dispense_glue(devices, context)
 
-    everyone_wait(screwdriver, dispenser, scara, tester)
+    with context.step("Place screen"):
+        place_screen(devices, context)
 
-    screwdriver.api.SetWrf(49, 137, 478.5, 180, 0, -90)
-    screwdriver.api.MoveLin(0, 0, 10, 180, 0, 0)
-    screwdriver.api.MoveJoints(2.59797, -47.59947, 64.63894, 90.76177, 87.51615, -107.05599)
+    with context.step("Test screen"):
+        test_screen(devices, context)
 
-    # if stoped_check():
-    #     return
+    with context.step("Pick screen"):
+        pick_screen(devices, context)
 
-    zaber.move_axis(ZABER_DISPENSER_POS)
-
-    dispensing_glue(dispenser)
-    everyone_wait(screwdriver, dispenser, scara, tester)
-    dispenser.api.MoveJoints(0, -60, 60, 0, 30, -45)
-
-    # if stoped_check():
-    #     everyone_wait(screwdriver, dispenser, scara, tester)
-    #     return
-
-    zaber.move_axis(ZABER_SCARA_POS)
-    scara.api.StartProgram("place_screen")
-    everyone_wait(screwdriver, dispenser, scara, tester)
-
-    zaber.move_axis(ZABER_TEST_POS)
-    test_pattern(tester)
-    everyone_wait(screwdriver, dispenser, scara, tester)
-
-    zaber.move_axis(ZABER_SCARA_POS)
-    scara.api.StartProgram("pick_screen")
-    everyone_wait(screwdriver, dispenser, scara, tester)
-
-    part_count = context.get_variable("part_count", 0) if context else 0
-
-    if context:
-        context.set_variable("part_count", part_count + 1, force=True)
-    return
-
-if __name__ == '__main__':
-    import os
-    from core.ApplicationController import ApplicationController
-
-    print("Running standalone test for prod_cycle...")
-    
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, "config.yaml")
-    context_path = os.path.join(script_dir, "production_context.yaml")
-
-    # 1. Initialize ApplicationController to parse real configs and create device objects
-    app_ctrl = ApplicationController(
-        config_path=config_path,
-        production_context_path=context_path
-    )
-
-    try:
-        # Optional: uncomment to actually communicate with hardware
-        app_ctrl.initialize()
-
-        # Execute the cycle using the loaded devices and production context
-        prod_cycle(app_ctrl.devices, context=app_ctrl.production_context)
-        
-    finally:
-        # Ensure to cleanly shut down any background thread created by the controller
-        app_ctrl.shutdown()
-
-    print("prod_cycle executed successfully.")
-
+    context.set_variable("part_count", context.get_variable("part_count", 0) + 1)

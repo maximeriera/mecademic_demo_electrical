@@ -1,0 +1,62 @@
+# context.yaml — params and variables of the Electrical assembly demo
+#
+# Read by task code through `context`, shown and edited in the Variables tab
+# while no task runs. This file is only read, never rewritten, so comments
+# are safe. Entries with `persist: true` are saved to context.state.json next
+# to it (git-ignored); delete that file to start again from the defaults.
+#
+# Entry format (params and variables alike):
+#   <name>:
+#     type: int | float | bool | str
+#     default: <typed value>        # starting value, and what a reset restores
+#     editable_when_idle: true      # false = read-only in the UI (code can still write it)
+#     reset_on: [event, ...]        # initialize, prod_start, prod_stop, abort, fault, or none
+#     persist: false                # true = keep the value across restarts
+#     description: <free text>      # shown in the Variables tab
+#
+# Task code that writes an entry not declared here raises ContextError, and
+# reading one returns the default passed in code, silently. Declare every
+# name the code uses.
+
+settings:
+  default_reset_events: none
+
+params:
+  joint_vel_pct:
+    type: float
+    default: 100
+    editable_when_idle: true
+    description: Joint velocity of every robot during production, percent.
+
+  cart_lin_vel_mm_s:
+    type: float
+    default: 1000
+    editable_when_idle: true
+    description: Linear velocity of the screwdriver, SCARA and tester during production, mm/s.
+
+  dispense_lin_vel_mm_s:
+    type: float
+    default: 100
+    editable_when_idle: true
+    description: Linear velocity of the dispenser while drawing the glue bead, mm/s.
+
+  cart_acc_pct:
+    type: float
+    default: 30
+    editable_when_idle: true
+    description: Cartesian acceleration of every robot during production, percent.
+
+  program_timeout_s:
+    type: float
+    default: 120
+    editable_when_idle: true
+    description: Longest a robot program or a station's moves may take before the cell faults, seconds.
+
+variables:
+  part_count:
+    type: int
+    default: 0
+    editable_when_idle: false
+    reset_on: prod_start
+    persist: true
+    description: Parts completed since production start.

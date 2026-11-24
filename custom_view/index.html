@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Assembly Line | Custom View</title>
+    <!-- Brand font, colour tokens and background from the standard app. -->
+    <link rel="stylesheet" href="/static/css/app.css">
+    <style>
+        body {
+            justify-content: flex-start;
+            padding: 0 16px 16px;
+        }
+        .screen {
+            width: min(100%, 1280px);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding: 10px 0 12px;
+        }
+        .screen .view-topbar {
+            width: 100%;
+            margin-bottom: 0;
+            padding-bottom: 10px;
+        }
+        .view-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: baseline;
+            gap: 4px 14px;
+        }
+        .view-header h1 {
+            margin: 0;
+            font-size: 1.15em;
+            color: var(--color-accent);
+        }
+        .view-sub {
+            color: var(--color-muted);
+            font-size: 0.8em;
+        }
+        .banner {
+            padding: 8px 14px;
+            border: 1px solid var(--color-red);
+            border-radius: var(--radius-control);
+            color: var(--color-red);
+            background: rgba(255, 90, 107, 0.08);
+            font-size: 0.9em;
+        }
+        .banner.info {
+            border-color: var(--color-border);
+            color: var(--color-muted);
+            background: transparent;
+        }
+        .panel {
+            background: var(--color-panel);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius);
+            padding: 14px 16px;
+        }
+        .panel-title {
+            margin: 0 0 10px;
+            color: var(--color-muted);
+            font-size: 0.72em;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        /* --- Line diagram: rail, stations, carriage --------------------- */
+        .line {
+            position: relative;
+            height: 132px;
+            margin: 0 clamp(36px, 7%, 80px);
+        }
+        .rail {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 50%;
+            height: 6px;
+            margin-top: -3px;
+            border-radius: 3px;
+            background: var(--color-border);
+        }
+        .station {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 0;
+        }
+        .station-tick {
+            position: absolute;
+            top: 50%;
+            left: -1px;
+            width: 2px;
+            height: 26px;
+            margin-top: -13px;
+            background: var(--color-muted);
+        }
+        .station-label {
+            position: absolute;
+            left: 0;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            text-align: center;
+            font-size: 0.8em;
+            line-height: 1.25;
+        }
+        .station-label small {
+            display: block;
+            color: var(--color-muted);
+            font-size: 0.85em;
+            font-variant-numeric: tabular-nums;
+        }
+        .station.up .station-label { top: 0; }
+        .station.down .station-label { bottom: 0; }
+        .station.active .station-tick { background: var(--color-accent); }
+        .station.active .station-label { color: var(--color-accent); font-weight: 700; }
+        .carriage {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 34px;
+            height: 18px;
+            margin-top: -9px;
+            transform: translateX(-50%);
+            border-radius: var(--radius-control);
+            background: var(--color-text);
+            transition: left 0.7s ease-in-out, background 0.2s;
+        }
+        .carriage.moving {
+            background: var(--color-accent);
+            box-shadow: 0 0 0 4px rgba(93, 239, 191, 0.25);
+        }
+        .carriage[hidden] { display: none; }
+        .line-caption {
+            margin-top: 6px;
+            color: var(--color-muted);
+            font-size: 0.8em;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* --- Station cards ---------------------------------------------- */
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px;
+        }
+        .card {
+            transition: border-color 0.2s;
+        }
+        .card.active { border-color: var(--color-accent); }
+        .card-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .card-head h2 {
+            margin: 0;
+            font-size: 1em;
+        }
+        .card-head .robot {
+            color: var(--color-muted);
+            font-size: 0.78em;
+        }
+        .pill {
+            flex: none;
+            padding: 2px 8px;
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-pill);
+            color: var(--color-muted);
+            font-size: 0.7em;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .card.active .pill {
+            border-color: var(--color-accent);
+            color: var(--color-accent);
+        }
+        .facts {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 4px 12px;
+            margin: 0;
+            font-size: 0.85em;
+        }
+        .facts dt { color: var(--color-muted); }
+        .facts dd { margin: 0; text-align: right; }
+        .ok { color: var(--color-accent); }
+        .warn { color: var(--color-yellow); }
+        .bad { color: var(--color-red); }
+        .muted { color: var(--color-muted); }
+
+        /* --- Production: counters and cycle-time bars -------------------- */
+        .kpis {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .kpi-label {
+            color: var(--color-muted);
+            font-size: 0.75em;
+        }
+        .kpi-value {
+            font-size: 1.6em;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+        .bars {
+            display: flex;
+            align-items: flex-end;
+            gap: 3px;
+            height: 90px;
+            border-bottom: 1px solid var(--color-border);
+        }
+        .bar {
+            flex: 1 1 0;
+            max-width: 28px;
+            min-height: 2px;
+            border-radius: 2px 2px 0 0;
+            background: var(--color-accent);
+            opacity: 0.75;
+        }
+        .bar:last-child { opacity: 1; }
+        .bars-caption {
+            margin-top: 6px;
+            color: var(--color-muted);
+            font-size: 0.75em;
+        }
+        [hidden] { display: none !important; }
+    </style>
+</head>
+<body>
+    <div class="screen">
+        <!-- Default top bar (logo, system status, current step), from view-header.js. -->
+        <div id="view-topbar"></div>
+
+        <header class="view-header">
+            <h1>Electrical assembly line</h1>
+            <div class="view-sub" id="sub">Connecting…</div>
+        </header>
+
+        <div class="banner" id="banner" hidden></div>
+
+        <section class="panel">
+            <h2 class="panel-title">Line</h2>
+            <div class="line" id="line">
+                <div class="rail"></div>
+                <div class="carriage" id="carriage" hidden title="Zaber axis carriage"></div>
+            </div>
+            <div class="line-caption" id="axis-caption">Axis position unknown until the first move.</div>
+        </section>
+
+        <section class="cards" id="cards"></section>
+
+        <section class="panel">
+            <h2 class="panel-title">Production</h2>
+            <div class="kpis">
+                <div><div class="kpi-label">Parts since PROD start</div><div class="kpi-value" id="parts">—</div></div>
+                <div><div class="kpi-label">Last cycle</div><div class="kpi-value" id="last-cycle">—</div></div>
+                <div><div class="kpi-label">Average, last 10</div><div class="kpi-value" id="avg-cycle">—</div></div>
+            </div>
+            <div class="bars" id="bars" aria-label="Duration of the latest cycles"></div>
+            <div class="bars-caption" id="bars-caption">Cycle times appear here once PROD completes a cycle.</div>
+        </section>
+    </div>
+
+    <script src="/static/js/view-header.js"></script>
+    <script>
+        // Data:
+        //   /api/data/read  channels "line" (stations, once per INITIALIZE), "axis"
+        //                   ({target_mm, moving}), "robots" (state per robot),
+        //                   "cycle_time_s" (one value per completed PROD cycle)
+        //   /api/status     the live step, to highlight the busy station
+        //   /api/context    part_count
+        //   /api/data       manifest: whether the view is running, setup errors
+        const CHANNELS = ['line', 'axis', 'robots', 'cycle_time_s'];
+        const FAST_MS = 500;
+        const SLOW_MS = 2000;
+        const MAX_BARS = 30;
+
+        const el = (id) => document.getElementById(id);
+        let cursor = null;
+        let stations = [];
+        let stationEls = {};
+        let cycleTimes = [];
+        let activeSteps = [];
+
+        function setText(node, text) {
+            if (node.textContent !== text) node.textContent = text;
+        }
+
+        function showBanner(text, kind) {
+            const banner = el('banner');
+            banner.hidden = !text;
+            banner.className = 'banner' + (kind === 'info' ? ' info' : '');
+            setText(banner, text || '');
+        }
+
+        function formatSeconds(s) {
+            return s === null || s === undefined ? '—' : `${Number(s).toFixed(1)} s`;
+        }
+
+        // --- Line and cards (built once per "line" sample) -----------------
+
+        function axisPercent(mm) {
+            const positions = stations.map(s => s.axis_mm);
+            const lo = Math.min(0, ...positions);
+            const hi = Math.max(...positions);
+            return hi > lo ? ((mm - lo) / (hi - lo)) * 100 : 0;
+        }
+
+        function buildLine(line) {
+            stations = line.stations || [];
+            const lineEl = el('line');
+            lineEl.querySelectorAll('.station').forEach(n => n.remove());
+            const cards = el('cards');
+            cards.replaceChildren();
+            stationEls = {};
+
+            stations.forEach((station, i) => {
+                const marker = document.createElement('div');
+                marker.className = 'station ' + (i % 2 ? 'down' : 'up');
+                marker.style.left = `${axisPercent(station.axis_mm)}%`;
+                const tick = document.createElement('div');
+                tick.className = 'station-tick';
+                const label = document.createElement('div');
+                label.className = 'station-label';
+                label.textContent = station.label;
+                const small = document.createElement('small');
+                small.textContent = `${station.axis_mm} mm`;
+                label.appendChild(small);
+                marker.append(tick, label);
+                lineEl.insertBefore(marker, el('carriage'));
+
+                const card = document.createElement('article');
+                card.className = 'panel card';
+                card.innerHTML = `
+                    <div class="card-head">
+                        <div><h2></h2><div class="robot"></div></div>
+                        <span class="pill">Idle</span>
+                    </div>
+                    <dl class="facts">
+                        <dt>Link</dt><dd data-f="link">—</dd>
+                        <dt>Activated</dt><dd data-f="activated">—</dd>
+                        <dt>Homed</dt><dd data-f="homed">—</dd>
+                        <dt>Error</dt><dd data-f="error">—</dd>
+                    </dl>`;
+                card.querySelector('h2').textContent = station.label;
+                card.querySelector('.robot').textContent = `${station.key} · ${station.model}`;
+                cards.appendChild(card);
+                stationEls[station.key] = { marker, card };
+            });
+            renderActive();
+        }
+
+        function renderActive() {
+            stations.forEach((station) => {
+                const els = stationEls[station.key];
+                if (!els) return;
+                const active = station.steps.some(step => activeSteps.includes(step));
+                els.marker.classList.toggle('active', active);
+                els.card.classList.toggle('active', active);
+                setText(els.card.querySelector('.pill'), active ? 'Running' : 'Idle');
+            });
+        }
+
+        function renderAxis(axis) {
+            if (!stations.length || !axis) return;
+            const carriage = el('carriage');
+            carriage.hidden = false;
+            carriage.style.left = `${axisPercent(axis.target_mm)}%`;
+            carriage.classList.toggle('moving', !!axis.moving);
+            const at = stations.find(s => s.axis_mm === axis.target_mm);
+            const where = at ? `${at.label} (${axis.target_mm} mm)` : `${axis.target_mm} mm`;
+            setText(el('axis-caption'), axis.moving ? `Axis moving to ${where}` : `Axis at ${where}`);
+        }
+
+        function setFact(card, field, text, cls) {
+            const dd = card.querySelector(`[data-f="${field}"]`);
+            setText(dd, text);
+            dd.className = cls || '';
+        }
+
+        function yesNo(card, field, value) {
+            if (value === null || value === undefined) setFact(card, field, '—', 'muted');
+            else setFact(card, field, value ? 'Yes' : 'No', value ? 'ok' : 'warn');
+        }
+
+        function renderRobots(robots) {
+            Object.entries(robots || {}).forEach(([name, state]) => {
+                const els = stationEls[name];
+                if (!els) return;
+                const card = els.card;
+                const link = state.link || '—';
+                const linkCls = link === 'control' ? 'ok'
+                    : (link === 'disconnected' || link === 'unavailable') ? 'bad'
+                    : link === 'simulated' ? 'muted' : 'warn';
+                setFact(card, 'link', link, linkCls);
+                yesNo(card, 'activated', state.activated);
+                yesNo(card, 'homed', state.homed);
+                if (state.error) setFact(card, 'error', `Code ${state.error_code ?? '?'}`, 'bad');
+                else if (state.error === false) setFact(card, 'error', state.paused ? 'None (paused)' : 'None', state.paused ? 'warn' : 'ok');
+                else setFact(card, 'error', '—', 'muted');
+            });
+        }
+
+        // --- Cycle times ----------------------------------------------------
+
+        function renderCycles() {
+            const last = cycleTimes.at(-1);
+            const recent = cycleTimes.slice(-10);
+            const avg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : null;
+            setText(el('last-cycle'), formatSeconds(last));
+            setText(el('avg-cycle'), formatSeconds(avg));
+
+            const shown = cycleTimes.slice(-MAX_BARS);
+            const max = Math.max(...shown, 0);
+            const bars = el('bars');
+            bars.replaceChildren(...shown.map((s) => {
+                const bar = document.createElement('div');
+                bar.className = 'bar';
+                bar.style.height = `${max ? (s / max) * 100 : 0}%`;
+                bar.title = formatSeconds(s);
+                return bar;
+            }));
+            setText(el('bars-caption'), shown.length
+                ? `Last ${shown.length} completed cycle(s), tallest ${formatSeconds(max)}.`
+                : 'Cycle times appear here once PROD completes a cycle.');
+        }
+
+        // --- Polling ----------------------------------------------------------
+
+        function pollData() {
+            const params = new URLSearchParams();
+            CHANNELS.forEach(ch => params.append('ch', ch));
+            if (cursor !== null) params.set('after', cursor);
+            return fetch(`/api/data/read?${params}`, { cache: 'no-store' })
+                .then(r => r.json())
+                .then((reply) => {
+                    if (reply.cursor === null) return;
+                    if (cursor !== null && reply.cursor < cursor) {
+                        // The app restarted: its sequence numbers start over.
+                        cursor = null;
+                        cycleTimes = [];
+                        return;
+                    }
+                    cursor = reply.cursor;
+                    const data = reply.data || {};
+                    const lastOf = ch => (data[ch] && data[ch].length ? data[ch].at(-1)[1] : null);
+                    const line = lastOf('line');
+                    if (line) buildLine(line);
+                    const axis = lastOf('axis');
+                    if (axis) renderAxis(axis);
+                    const robots = lastOf('robots');
+                    if (robots) renderRobots(robots);
+                    if (data.cycle_time_s && data.cycle_time_s.length) {
+                        cycleTimes.push(...data.cycle_time_s.map(([, v]) => v));
+                        cycleTimes = cycleTimes.slice(-MAX_BARS);
+                        renderCycles();
+                        refreshParts();   // a cycle just ended: part_count changed
+                    }
+                });
+        }
+
+        function pollStatus() {
+            return fetch('/api/status', { cache: 'no-store' })
+                .then(r => r.json())
+                .then((status) => {
+                    const step = status.step;
+                    activeSteps = step ? [...(step.path || []), step.name] : [];
+                    renderActive();
+                });
+        }
+
+        function fastLoop() {
+            Promise.all([pollData(), pollStatus()])
+                .catch(() => setText(el('sub'), 'Controller unreachable.'))
+                .finally(() => setTimeout(fastLoop, FAST_MS));
+        }
+
+        function refreshParts() {
+            return fetch('/api/context', { cache: 'no-store' })
+                .then(r => r.json())
+                .then((context) => {
+                    const parts = context && context.variables && context.variables.part_count;
+                    setText(el('parts'), parts ? String(parts.value) : '—');
+                })
+                .catch(() => {});
+        }
+
+        function slowLoop() {
+            Promise.all([
+                fetch('/api/data', { cache: 'no-store' }).then(r => r.json()),
+                refreshParts(),
+            ])
+                .then(([manifest]) => {
+                    if (manifest.setup_error) {
+                        showBanner(`Custom view setup failed: ${manifest.setup_error}`);
+                    } else if (!manifest.active) {
+                        showBanner('Press INITIALIZE in the controller to start the live view.', 'info');
+                    } else {
+                        showBanner('');
+                    }
+                    setText(el('sub'), manifest.active
+                        ? 'Live · 4 robots · Zaber transfer axis'
+                        : 'Not initialized');
+                })
+                .catch(() => setText(el('sub'), 'Controller unreachable.'))
+                .finally(() => setTimeout(slowLoop, SLOW_MS));
+        }
+
+        renderCycles();
+        fastLoop();
+        slowLoop();
+    </script>
+</body>
+</html>
