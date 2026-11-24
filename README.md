@@ -19,7 +19,7 @@ Open the app, press **INITIALIZE** (connects, activates and homes every robot, h
 | Name in code | Type | Address | Role |
 |---|---|---|---|
 | `screwdriver` | Meca500 (`mecademic`) | 192.168.0.101 | Screws the part (program `screwing_seq`) |
-| `dispenser` | Meca500 (`mecademic`) | 192.168.0.102 | Dispenses the glue bead (moves in `prod.py`) |
+| `dispenser` | Meca500 (`mecademic`) | 192.168.0.102 | Dispenses the glue bead (program `iphone_dispensing`) |
 | `scara` | MCS500 (`mecademic`) | 192.168.0.103 | Places and removes the screen (programs `place_screen`, `pick_screen`) |
 | `tester` | Meca500 (`mecademic`) | 192.168.0.104 | Touch test pattern on the screen (moves in `prod.py`) |
 | `zaber` | Zaber axis (`zaber`, legacy driver) | `COM3` | Carries the part: screwing 0 mm, dispensing 180 mm, SCARA 400 mm, test 450 mm |
@@ -31,10 +31,11 @@ The screwdriver and SCARA motion lives in programs saved on the controllers. Eac
 | Robot | Program | Ends with | Called from |
 |---|---|---|---|
 | `screwdriver` | `screwing_seq` (calls `screw` once per screw) | `SetCheckpoint(11)` | `prod.py`, manual action *Screw parts* |
+| `dispenser` | `iphone_dispensing` | `SetCheckpoint(11)` | `prod.py`, manual action *Dispense glue* |
 | `scara` | `place_screen` | `SetCheckpoint(11)` | `prod.py` |
 | `scara` | `pick_screen` | `SetCheckpoint(12)` | `prod.py` |
 
-The dispenser and tester moves are written in `prod.py`; HOME and SHIPMENT are joint moves in `home.py` and `shipment.py`.
+The tester moves are written in `prod.py`; HOME and SHIPMENT are joint moves in `home.py` and `shipment.py`.
 
 ## Sequences
 
@@ -74,7 +75,7 @@ The dispenser and tester moves are written in `prod.py`; HOME and SHIPMENT are j
 
 ## Before the next run on hardware (TODO)
 
-- [ ] Add `SetCheckpoint(11)` as the last line of `screwing_seq` on the screwdriver, and `SetCheckpoint(11)` / `SetCheckpoint(12)` as the last lines of `place_screen` / `pick_screen` on the SCARA. Without them PROD faults after `program_timeout_s`.
+- [ ] Add `SetCheckpoint(11)` as the last line of `screwing_seq` on the screwdriver and of `iphone_dispensing` on the dispenser, and `SetCheckpoint(11)` / `SetCheckpoint(12)` as the last lines of `place_screen` / `pick_screen` on the SCARA. Without them PROD faults after `program_timeout_s`.
 - [ ] Confirm the Zaber serial port. In the Docker container it is a Linux device (e.g. `/dev/ttyUSB0`) that must also be passed to the container (`devices:` in `~/demo_ws/docker-compose.yml`).
 - [ ] Check `program_timeout_s` (120 s) against the real duration of `screwing_seq`.
 

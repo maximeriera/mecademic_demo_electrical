@@ -7,14 +7,14 @@ the exit home. Nothing here needs to check for STOP or ABORT.
 
 Sequence (declared under ``sequences: prod_cycle`` in config.yaml):
   1. Screw parts      screwdriver program "screwing_seq", end checkpoint 11
-  2. Dispense glue    dispenser glue path, driven from this file
+  2. Dispense glue    dispenser program "iphone_dispensing", end checkpoint 11
   3. Place screen     scara program "place_screen", end checkpoint 11
   4. Test screen      tester touch pattern, driven from this file
   5. Pick screen      scara program "pick_screen", end checkpoint 12
 
-The Zaber axis carries the part to each station before its step. A robot's
-retract move is sent at the end of its step and finishes while the axis moves
-on; the next step waits for every robot before it ends.
+The Zaber axis carries the part to each station before its step. The
+screwdriver's retract move is sent at the end of its step and finishes while
+the axis moves on; every step waits for all robots before it ends.
 
 Robot programs and checkpoints this file relies on are listed in README.md
 ("Robot programs").
@@ -31,6 +31,7 @@ from cell_tools import run_program
 # its last line. TODO: add SetCheckpoint(<n>) at the end of each program on the
 # robot (the backups of 2026-05-25 have none).
 SCREW_PROGRAM, SCREW_DONE = "screwing_seq", 11          # screwdriver
+DISPENSE_PROGRAM, DISPENSE_DONE = "iphone_dispensing", 11       # dispenser
 PLACE_SCREEN_PROGRAM, PLACE_SCREEN_DONE = "place_screen", 11   # scara
 PICK_SCREEN_PROGRAM, PICK_SCREEN_DONE = "pick_screen", 12      # scara
 
@@ -47,24 +48,8 @@ SCREW_RETRACT_WRF = (49, 137, 478.5, 180, 0, -90)
 SCREW_RETRACT_POSE = (0, 0, 10, 180, 0, 0)
 SCREWDRIVER_REST_JOINTS = (2.59797, -47.59947, 64.63894, 90.76177, 87.51615, -107.05599)
 
-# Dispenser: glue bead around the part, WRF, mm / deg. The first and last
-# points are the approach above the start of the bead.
-GLUE_APPROACH = (93.00003, 74.64999, 165.54995, 113.81136, 3.12123, -135.76364)
-GLUE_PATH = (
-    (93.00002, 74.64999, 129.74996, 113.81135, 3.12122, -135.76365),
-    (200.30003, 74.65, 129.74995, 113.81136, 3.12123, -135.76366),
-    (203.50002, 72.5002, 129.74994, 113.81136, 3.12123, -135.76366),
-    (205.50002, 69.15002, 129.74994, 113.81136, 3.12123, -135.76366),
-    (205.50002, 27.30003, 129.74994, 113.81137, 3.12123, -135.76367),
-    (203.50002, 24.30003, 129.74994, 113.81137, 3.12123, -135.76367),
-    (199.65002, 21.10003, 129.74993, 113.81137, 3.12123, -135.76369),
-    (93.25002, 21.10003, 129.74993, 113.81138, 3.12123, -135.76368),
-    (91.25002, 23.50003, 129.74993, 113.81138, 3.12123, -135.76368),
-    (85, 24.00005, 129.7499, 113.81139, 3.12122, -135.7637),
-    (85, 70.75004, 129.74989, 113.81139, 3.12122, -135.76369),
-    (91.00002, 73.64999, 129.74996, 113.81135, 3.12122, -135.76365),
-    (93.00002, 74.64999, 129.74996, 113.81135, 3.12122, -135.76365),
-)
+# Dispenser rest joints (HOME). The glue path itself lives in the robot
+# program DISPENSE_PROGRAM.
 DISPENSER_REST_JOINTS = (0, -60, 60, 0, 30, -45)
 
 # Tester: touch pattern on the screen, WRF, mm / deg.
@@ -140,21 +125,11 @@ def screw_parts(devices: Dict[str, Device], context: AppContext) -> None:
 
 
 def dispense_glue(devices: Dict[str, Device], context: AppContext) -> None:
-    """Draw the glue bead, then send the dispenser back to rest (not waited)."""
-    dispenser = devices["dispenser"].api
+    """Run the dispensing program on the dispenser."""
     timeout = float(context.get_param("program_timeout_s", 120))
-
     move_axis(devices, context, AXIS_DISPENSE_MM)
-    dispenser.MovePose(*GLUE_APPROACH)
-    dispenser.SetBlending(0)
-    dispenser.MoveLin(*GLUE_PATH[0])
-    dispenser.SetBlending(100)
-    for point in GLUE_PATH[1:]:
-        dispenser.MoveLin(*point)
-    dispenser.MoveLin(*GLUE_APPROACH)
+    run_program(devices["dispenser"], DISPENSE_PROGRAM, DISPENSE_DONE, timeout=timeout)
     wait_all_robots(devices, timeout)
-
-    dispenser.MoveJoints(*DISPENSER_REST_JOINTS)
 
 
 def place_screen(devices: Dict[str, Device], context: AppContext) -> None:
